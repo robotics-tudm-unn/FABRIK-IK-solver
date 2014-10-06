@@ -89,7 +89,7 @@ def FABRIK_open_chain_solver(init_chain_position, target_end_effector_pos):
                 lambda_v = link_lens[i] / current_link_len
                 current_chain_position[i + 1] = (1. - lambda_v) * current_chain_position[i] + lambda_v * current_chain_position[i + 1]
 
-            dist = np.linalg.norm(init_chain_position[-1] - target_end_effector_pos)
+            dist = np.linalg.norm(current_chain_position[-1] - target_end_effector_pos)
             iter_num += 1
 
         # Check if the targed position is reached.
@@ -104,22 +104,22 @@ def FABRIK_open_chain_solver(init_chain_position, target_end_effector_pos):
     return is_reached, current_chain_position
 
 
-def plot_FABRIK_solution(target_end_effector_pos, init_chain_position, res_chain_position):
+def plot_FABRIK_solution(target_end_effector_pos, chain_position_list):
     """
         Testing plot.
         Input:
             target_end_effector_pos - (numpy array 3D) the target position of end effector.
-            init_chain_position - (Mx3 numpy array) initial kinematic chain position.
-            res_chain_position - (Mx3 numpy array) result kinematic chain position.
+            chain_position_list - (list of Mx3 numpy array) list of kinematic chain position.
         Comments:
             Kinematic chains could appeal as they have different links lengths, because axis unit lengths couldn't be equal.
             This is a Matplotlib bug and there is some workaround for it, but it doesn't work complitly.
     """
     fig = plt.figure()
     ax = fig.add_subplot(111, aspect='equal', projection='3d')
-    ax.plot(init_chain_position[:, 0], init_chain_position[:, 1], init_chain_position[:, 2], marker='o', label='Init')
-    ax.plot(res_chain_position[:, 0], res_chain_position[:, 1], res_chain_position[:, 2], marker='o', label='Res')
-    ax.plot([target_end_effector_pos[0]], [target_end_effector_pos[1]], [target_end_effector_pos[2]], marker='o', linestyle='.', label='Target')
+    for ind, position in enumerate(chain_position_list):
+        ax.plot(position[:, 0], position[:, 1], position[:, 2], marker='o', label=str(ind))
+        if ind > 0:
+            ax.plot([target_end_effector_pos[ind - 1][0]], [target_end_effector_pos[ind - 1][1]], [target_end_effector_pos[ind - 1][2]], marker='o', linestyle='.', color='r')
     ax.legend(loc=0, numpoints=1)
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
@@ -127,19 +127,23 @@ def plot_FABRIK_solution(target_end_effector_pos, init_chain_position, res_chain
 
     # Magic workaround for the Matplolib bug.
     coub_axis = list()
-    for ind in range(3):
-        coub_axis.append(np.array([init_chain_position[:, ind].max(), init_chain_position[:, ind].min(),
-                        res_chain_position[:, ind].max(), res_chain_position[:, ind].min(),
-                        target_end_effector_pos[ind]]))
+    for ind in xrange(3):
+        coub_axis.append(np.array(map(lambda x: x[:, ind].max(), chain_position_list)
+                                  + map(lambda x: x[:, ind].min(), chain_position_list)
+                                  + map(lambda x: x[ind].max(), target_end_effector_pos)
+                                  + map(lambda x: x[ind].max(), target_end_effector_pos)))
 
+    #                            + [target_end_effector_pos[ind]])
     # Create cubic bounding box to simulate equal aspect ratio
-    max_range = np.array([coub_axis[0].max() - coub_axis[0].min(), coub_axis[1].max() - coub_axis[1].min(), coub_axis[2].max() - coub_axis[2].min()]).max()
-    Xb = 0.5 * max_range * np.mgrid[-1: 2: 2, -1: 2: 2, -1: 2: 2][0].flatten() + 0.5 * (coub_axis[0].max() + coub_axis[0].min())
-    Yb = 0.5 * max_range * np.mgrid[-1: 2: 2, -1: 2: 2, -1: 2: 2][1].flatten() + 0.5 * (coub_axis[1].max() + coub_axis[1].min())
-    Zb = 0.5 * max_range * np.mgrid[-1: 2: 2, -1: 2: 2, -1: 2: 2][2].flatten() + 0.5 * (coub_axis[2].max() + coub_axis[2].min())
+    # max_range = np.array([coub_axis[0].max() - coub_axis[0].min(), coub_axis[1].max() - coub_axis[1].min(), coub_axis[2].max() - coub_axis[2].min()]).max()
+    max_range = np.array(map(lambda axis: axis.max() - axis.min(), coub_axis)).max()
+    grid_list = list()
+    for ind in xrange(3):
+        curr_axis_grid = 0.5 * max_range * np.mgrid[-1: 2: 2, -1: 2: 2, -1: 2: 2][ind].flatten() + 0.5 * (coub_axis[ind].max() + coub_axis[ind].min())
+        grid_list.append(curr_axis_grid)
 
     # Comment or uncomment following both lines to test the fake bounding box:
-    for xb, yb, zb in zip(Xb, Yb, Zb):
+    for xb, yb, zb in zip(grid_list[0], grid_list[1], grid_list[2]):
         ax.plot([xb], [yb], [zb], 'w')
 
     plt.show()
@@ -150,17 +154,27 @@ def main():
     # Set the initial position of kinematic chain.
     init_chain_position = set_test_position()
 
-    # Set the target position of the end effector.
-    target_end_effector_pos = np.array([1., 3., 1.])
+    # Set the list of target positions of the end effector.
+    target_end_effector_positions = [np.array([1., 3., 1.]),
+                                     np.array([3., 1., 0.]),
+                                     np.array([-3., -1., 0.])]
 
-    # Solve IK with FABRIK.
-    is_reached, res_chain_position = FABRIK_open_chain_solver(init_chain_position, target_end_effector_pos)
+    # Solve all chain positions.
+    positions_list = [init_chain_position.copy()]
+    res_chain_position = init_chain_position.copy()
+    for next_target in target_end_effector_positions:
+        is_reached, res_chain_position = FABRIK_open_chain_solver(res_chain_position, next_target)
+        if is_reached:
+            positions_list.append(res_chain_position.copy())
+        else:
+            print 'next target pos:', next_target, ' is not reachable!'
+            break
 
     # Check if links lengths are the same as initial.
-    print get_links_lengths(res_chain_position)
+    print 'Control links lengths: ', get_links_lengths(res_chain_position)
 
     # Plot solution.
-    plot_FABRIK_solution(target_end_effector_pos, init_chain_position, res_chain_position)
+    plot_FABRIK_solution(target_end_effector_positions, positions_list)
     pass
 
 
